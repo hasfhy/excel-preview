@@ -126,11 +126,21 @@
 <script src="https://cdn.datatables.net/fixedheader/3.4.0/js/dataTables.fixedHeader.min.js"></script>
 
 <script>
-    // 配置项
+    // ============================================
+    // === 核心配置区：在这里修改要显示的列 ===
+    // ============================================
     const CONFIG = {
         url: 'data.xlsx',       // Excel 文件路径
-        pageSize: 100           // 每页显示条数
+        pageSize: 100,          // 每页显示条数
+        // ----------------------------------------------------
+        // **重要配置:** 填写您想要显示的列的标题 (必须与Excel首行标题精确匹配)
+        // 如果此数组为空 [], 则默认显示所有列。
+        // 示例：只想看“姓名”和“部门”两列
+        // visibleColumns: ["姓名", "部门"]
+        visibleColumns: ["箱号","进场方式","提单号","持箱人","空重","船公司箱型","场箱位","入场时间","船名航次","放行","扣箱"] // 当前设置：显示所有列 (如果需要隐藏，请在这里填写标题)
+        // ----------------------------------------------------
     };
+    // ============================================
 
     let dataTable = null;
 
@@ -187,7 +197,6 @@
             console.error(e);
             $('#status-text').html(`<span style="color:red">错误: ${e.message}</span>`);
             alert(`加载失败: ${e.message}`);
-            // 出错也需要移除遮罩，否则用户卡死
             $('#loading-mask').fadeOut(300);
         } finally {
             // 恢复按钮状态
@@ -195,24 +204,20 @@
         }
     }
 
-    // 数据标准化：确保矩阵是完整的矩形 (保持不变，用于防止报错)
+    // 数据标准化：确保矩阵是完整的矩形
     function normalizeData(rawData) {
-        // 计算最大列数
         let maxCols = 0;
         rawData.forEach(row => {
             if (row.length > maxCols) maxCols = row.length;
         });
 
-        // 分离表头和数据
         let headers = rawData[0] || [];
         let body = rawData.slice(1);
 
-        // 补全表头
         while (headers.length < maxCols) {
             headers.push(`未命名列 ${headers.length + 1}`);
         }
 
-        // 补全数据行
         const cleanBody = body.map(row => {
             const newRow = [];
             for (let i = 0; i < maxCols; i++) {
@@ -225,6 +230,7 @@
         return { headers, body: cleanBody };
     }
 
+    // 核心渲染函数
     function renderTable(headers, bodyData) {
         const $table = $('#excel-table');
 
@@ -233,12 +239,24 @@
             $table.empty(); 
         }
 
+        // === 关键修改点：根据 CONFIG.visibleColumns 设置列的可见性 ===
         const columnsConfig = headers.map((title, index) => {
+            let isVisible = true;
+            
+            // 只有当配置了 visibleColumns 且数组非空时才进行筛选
+            if (CONFIG.visibleColumns.length > 0) {
+                // 检查当前列标题是否包含在可见列表中
+                isVisible = CONFIG.visibleColumns.includes(title);
+            }
+
             return { 
                 title: title || `列 ${index}`,
-                defaultContent: "" 
+                defaultContent: "", 
+                visible: isVisible // <-- 控制列显示/隐藏
             };
         });
+        // ==========================================================
+
 
         dataTable = $table.DataTable({
             data: bodyData,
@@ -268,25 +286,32 @@
                 const trClone = $thead.find('tr:eq(0)').clone(true).addClass('filter-row').appendTo($thead);
                 
                 trClone.find('th').each(function(i) {
-                    const $th = $(this);
-                    $th.html(''); 
-                    $th.removeClass('sorting sorting_asc sorting_desc');
+                    const column = api.column(i);
+                    // 仅对可见列添加筛选器
+                    if (column.visible()) {
+                        const $th = $(this);
+                        $th.html(''); 
+                        $th.removeClass('sorting sorting_asc sorting_desc');
 
-                    const select = $('<select class="filter-select"><option value="">全部</option></select>')
-                        .appendTo($th)
-                        .on('click', function(e) { e.stopPropagation(); })
-                        .on('change', function() {
-                            const val = $.fn.dataTable.util.escapeRegex($(this).val());
-                            api.column(i).search(val ? '^' + val + '$' : '', true, false).draw();
+                        const select = $('<select class="filter-select"><option value="">全部</option></select>')
+                            .appendTo($th)
+                            .on('click', function(e) { e.stopPropagation(); })
+                            .on('change', function() {
+                                const val = $.fn.dataTable.util.escapeRegex($(this).val());
+                                api.column(i).search(val ? '^' + val + '$' : '', true, false).draw();
+                            });
+
+                        column.data().unique().sort().each(function(d) {
+                            if (d !== "") {
+                                let text = d;
+                                if (text.length > 20) text = text.substr(0,20) + '...';
+                                select.append('<option value="' + d + '">' + text + '</option>');
+                            }
                         });
-
-                    api.column(i).data().unique().sort().each(function(d) {
-                        if (d !== "") {
-                            let text = d;
-                            if (text.length > 20) text = text.substr(0,20) + '...';
-                            select.append('<option value="' + d + '">' + text + '</option>');
-                        }
-                    });
+                    } else {
+                        // 如果列不可见，清空筛选器位置（保持DOM结构整洁）
+                        $(this).empty(); 
+                    }
                 });
             }
         });
